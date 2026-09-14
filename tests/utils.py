@@ -13,18 +13,42 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 import platform
 from functools import wraps
 
 import pytest
 import torch
 
-from lerobot.common.utils.import_utils import is_package_available
+from lerobot.utils.device_utils import auto_select_torch_device
+from lerobot.utils.import_utils import is_package_available
 
-# Pass this as the first argument to init_hydra_config.
-DEFAULT_CONFIG_PATH = "lerobot/configs/default.yaml"
+DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", str(auto_select_torch_device()))
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Camera indices used for connecting physical cameras
+OPENCV_CAMERA_INDEX = int(os.environ.get("LEROBOT_TEST_OPENCV_CAMERA_INDEX", 0))
+INTELREALSENSE_SERIAL_NUMBER = int(os.environ.get("LEROBOT_TEST_INTELREALSENSE_SERIAL_NUMBER", 128422271614))
+
+DYNAMIXEL_PORT = os.environ.get("LEROBOT_TEST_DYNAMIXEL_PORT", "/dev/tty.usbmodem575E0032081")
+DYNAMIXEL_MOTORS = {
+    "shoulder_pan": [1, "xl430-w250"],
+    "shoulder_lift": [2, "xl430-w250"],
+    "elbow_flex": [3, "xl330-m288"],
+    "wrist_flex": [4, "xl330-m288"],
+    "wrist_roll": [5, "xl330-m288"],
+    "gripper": [6, "xl330-m288"],
+}
+
+FEETECH_PORT = os.environ.get("LEROBOT_TEST_FEETECH_PORT", "/dev/tty.usbmodem585A0080971")
+FEETECH_MOTORS = {
+    "shoulder_pan": [1, "sts3215"],
+    "shoulder_lift": [2, "sts3215"],
+    "elbow_flex": [3, "sts3215"],
+    "wrist_flex": [4, "sts3215"],
+    "wrist_roll": [5, "sts3215"],
+    "gripper": [6, "sts3215"],
+}
 
 
 def require_x86_64_kernel(func):
@@ -72,6 +96,22 @@ def require_cuda(func):
     return wrapper
 
 
+def require_hf_token(func):
+    """
+    Decorator that skips the test if no Hugging Face Hub token is available.
+    """
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        from huggingface_hub import get_token
+
+        if get_token() is None:
+            pytest.skip("requires HF token for gated model access")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
 def require_env(func):
     """
     Decorator that skips the test if the required environment package is not installed.
@@ -100,7 +140,7 @@ def require_env(func):
     return wrapper
 
 
-def require_package_arg(func):
+def skip_if_package_arg_missing(func):
     """
     Decorator that skips the test if the required package is not installed.
     This is similar to `require_env` but more general in that it can check any package (not just environments).
@@ -132,7 +172,7 @@ def require_package_arg(func):
     return wrapper
 
 
-def require_package(package_name):
+def skip_if_package_missing(package_name, import_name=None):
     """
     Decorator that skips the test if the specified package is not installed.
     """
@@ -140,29 +180,10 @@ def require_package(package_name):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            if not is_package_available(package_name):
+            if not is_package_available(pkg_name=package_name, import_name=import_name):
                 pytest.skip(f"{package_name} not installed")
             return func(*args, **kwargs)
 
         return wrapper
 
     return decorator
-
-
-def require_koch(func):
-    """
-    Decorator that skips the test if an alexander koch robot is not available
-    """
-
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        # Access the pytest request context to get the is_koch_available fixture
-        request = kwargs.get("request")
-        if request is None:
-            raise ValueError("The 'request' fixture must be passed to the test function as a parameter.")
-
-        if not request.getfixturevalue("is_koch_available"):
-            pytest.skip("An alexander koch robot is not available.")
-        return func(*args, **kwargs)
-
-    return wrapper
